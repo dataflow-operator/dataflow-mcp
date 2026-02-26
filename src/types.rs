@@ -34,6 +34,7 @@ pub struct ParsedSource {
     pub kafka: Option<serde_json::Value>,
     pub postgresql: Option<serde_json::Value>,
     pub trino: Option<serde_json::Value>,
+    pub clickhouse: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,9 +44,10 @@ pub struct ParsedSink {
     pub kafka: Option<serde_json::Value>,
     pub postgresql: Option<serde_json::Value>,
     pub trino: Option<serde_json::Value>,
+    pub clickhouse: Option<serde_json::Value>,
 }
 
 pub const DATAFLOW_API_VERSION: &str = "dataflow.dataflow.io/v1";
 pub const DATAFLOW_KIND: &str = "DataFlow";
-pub const SOURCE_TYPES: [&str; 3] = ["kafka", "postgresql", "trino"];
-pub const SINK_TYPES: [&str; 3] = ["kafka", "postgresql", "trino"];
+pub const SOURCE_TYPES: [&str; 4] = ["kafka", "postgresql", "trino", "clickhouse"];
+pub const SINK_TYPES: [&str; 4] = ["kafka", "postgresql", "trino", "clickhouse"];

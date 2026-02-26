@@ -145,6 +145,11 @@ pub fn validate_dataflow_manifest(config_yaml: &str) -> Result<(), Vec<String>> 
                     errors.push("spec.source.trino is required when source.type is trino".to_string());
                 }
             }
+            "clickhouse" => {
+                if source.clickhouse.is_none() {
+                    errors.push("spec.source.clickhouse is required when source.type is clickhouse".to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -170,6 +175,11 @@ pub fn validate_dataflow_manifest(config_yaml: &str) -> Result<(), Vec<String>> 
             "trino" => {
                 if sink.trino.is_none() {
                     errors.push("spec.sink.trino is required when sink.type is trino".to_string());
+                }
+            }
+            "clickhouse" => {
+                if sink.clickhouse.is_none() {
+                    errors.push("spec.sink.clickhouse is required when sink.type is clickhouse".to_string());
                 }
             }
             _ => {}
