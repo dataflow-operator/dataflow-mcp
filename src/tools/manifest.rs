@@ -290,4 +290,47 @@ metadata:
         let err = validate_dataflow_manifest(yaml).unwrap_err();
         assert!(!err.is_empty());
     }
+
+    #[test]
+    fn test_generate_dataflow_manifest_clickhouse() {
+        let yaml = generate_dataflow_manifest(
+            Some("Kafka to ClickHouse"),
+            "kafka",
+            "clickhouse",
+            Some(r#"{"brokers":["localhost:9092"],"topic":"input-topic"}"#),
+            Some(r#"{"connectionString":"clickhouse://default@localhost:9000/default","table":"output_table"}"#),
+            None,
+            Some("kafka-to-clickhouse"),
+            None,
+        )
+        .unwrap();
+        assert!(yaml.contains("apiVersion: dataflow.dataflow.io/v1"));
+        assert!(yaml.contains("kind: DataFlow"));
+        assert!(yaml.contains("name: kafka-to-clickhouse"));
+        assert!(yaml.contains("clickhouse:"));
+        assert!(yaml.contains("connectionString:"));
+        assert!(yaml.contains("output_table"));
+    }
+
+    #[test]
+    fn test_validate_dataflow_manifest_clickhouse() {
+        let yaml = r#"
+apiVersion: dataflow.dataflow.io/v1
+kind: DataFlow
+metadata:
+  name: clickhouse-test
+spec:
+  source:
+    type: clickhouse
+    clickhouse:
+      connectionString: "clickhouse://default@localhost:9000/default"
+      table: source_table
+  sink:
+    type: clickhouse
+    clickhouse:
+      connectionString: "clickhouse://default@localhost:9000/default"
+      table: sink_table
+"#;
+        assert!(validate_dataflow_manifest(yaml).is_ok());
+    }
 }

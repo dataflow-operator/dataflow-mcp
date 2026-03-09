@@ -28,6 +28,11 @@ fn default_connectors_raw() -> &'static str {
       "description": "Read from Trino tables",
       "required_fields": ["serverURL", "catalog", "schema", "table"],
       "optional_fields": ["query", "pollInterval", "keycloak"]
+    },
+    "clickhouse": {
+      "description": "Read from ClickHouse tables",
+      "required_fields": ["connectionString", "table"],
+      "optional_fields": ["query", "pollInterval"]
     }
   },
   "sinks": {
@@ -39,12 +44,17 @@ fn default_connectors_raw() -> &'static str {
     "postgresql": {
       "description": "Write to PostgreSQL tables",
       "required_fields": ["connectionString", "table"],
-      "optional_fields": ["batchSize", "autoCreateTable", "upsertMode", "conflictKey"]
+      "optional_fields": ["batchSize", "batchFlushIntervalSeconds", "autoCreateTable", "upsertMode", "conflictKey", "rawMode"]
     },
     "trino": {
       "description": "Write to Trino tables",
       "required_fields": ["serverURL", "catalog", "schema", "table"],
-      "optional_fields": ["batchSize", "autoCreateTable", "keycloak"]
+      "optional_fields": ["batchSize", "batchFlushIntervalSeconds", "autoCreateTable", "rawMode", "keycloak"]
+    },
+    "clickhouse": {
+      "description": "Write to ClickHouse tables",
+      "required_fields": ["connectionString", "table"],
+      "optional_fields": ["batchSize", "batchFlushIntervalSeconds", "autoCreateTable", "rawMode"]
     }
   }
 }"#
