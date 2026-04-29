@@ -1,6 +1,7 @@
 // Migrate Kafka Connect connector config(s) to DataFlow manifest.
 
-use crate::types::{DATAFLOW_API_VERSION, DATAFLOW_KIND};
+use super::common::{build_dataflow_toplevel, to_yaml_string};
+use crate::error::{DataFlowError, Result};
 use serde_json::{Map as JsonMap, Value};
 use std::collections::HashMap;
 
@@ -12,18 +13,28 @@ pub struct KafkaConnectConnector {
 }
 
 /// One connector or array of two (source, sink).
-fn parse_input(json: &str) -> Result<Vec<KafkaConnectConnector>, String> {
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("Invalid JSON: {}", e))?;
+fn parse_input(json: &str) -> Result<Vec<KafkaConnectConnector>> {
+    let v: Value = serde_json::from_str(json).map_err(|e| DataFlowError::Json {
+        context: "kafka_connect_config".to_string(),
+        source: e,
+    })?;
     if let Some(arr) = v.as_array() {
         let mut out = Vec::new();
         for item in arr {
             let c: KafkaConnectConnector = serde_json::from_value(item.clone())
-                .map_err(|e| format!("Connector item invalid: {}", e))?;
+                .map_err(|e| DataFlowError::Json {
+                    context: "connector item".to_string(),
+                    source: e,
+                })?;
             out.push(c);
         }
         Ok(out)
     } else {
-        let c: KafkaConnectConnector = serde_json::from_value(v).map_err(|e| format!("Invalid connector: {}", e))?;
+        let c: KafkaConnectConnector = serde_json::from_value(v)
+            .map_err(|e| DataFlowError::Json {
+                context: "connector".to_string(),
+                source: e,
+            })?;
         Ok(vec![c])
     }
 }
@@ -63,56 +74,64 @@ fn connector_kind(connector_class: &str) -> (&'static str, &'static str) {
     ("unknown", "unknown")
 }
 
-/// Builds DataFlow source spec (kafka) from Kafka Connect source config.
-fn map_kafka_source(config: &HashMap<String, String>) -> (JsonMap<String, Value>, Vec<String>) {
+/// Builds a DataFlow kafka connector spec from Kafka Connect config.
+/// `default_topic` is used when topics/topic keys are missing.
+/// `include_consumer_group` adds consumerGroup and schema registry handling (source-only).
+fn build_kafka_config(
+    config: &HashMap<String, String>,
+    default_topic: &str,
+    include_consumer_group: bool,
+) -> (JsonMap<String, Value>, Vec<String>) {
     let notes = Vec::new();
     let brokers = get(config, "bootstrap.servers")
         .map(|s| brokers_from_bootstrap_servers(&s))
         .unwrap_or_default();
     let topic = get(config, "topics")
         .or_else(|| get(config, "topic"))
-        .unwrap_or_else(|| "input-topic".to_string());
-    let consumer_group = get(config, "group.id").or_else(|| get(config, "consumer.group"));
+        .unwrap_or_else(|| default_topic.to_string());
 
-    let mut kafka: JsonMap<String, Value> = JsonMap::new();
-    kafka.insert("brokers".to_string(), Value::Array(brokers.into_iter().map(Value::String).collect()));
-    kafka.insert("topic".to_string(), Value::String(topic));
-    if let Some(cg) = consumer_group {
-        kafka.insert("consumerGroup".to_string(), Value::String(cg));
-    }
-    if get(config, "value.converter").as_deref() == Some("io.confluent.connect.avro.AvroConverter") {
-        if let Some(url) = get(config, "schema.registry.url") {
-            let mut sr: JsonMap<String, Value> = JsonMap::new();
-            sr.insert("url".to_string(), Value::String(url));
-            kafka.insert("schemaRegistry".to_string(), Value::Object(sr));
-            kafka.insert("format".to_string(), Value::String("avro".to_string()));
+    let mut config_obj: JsonMap<String, Value> = JsonMap::new();
+    config_obj.insert(
+        "brokers".to_string(),
+        Value::Array(brokers.into_iter().map(Value::String).collect()),
+    );
+    config_obj.insert("topic".to_string(), Value::String(topic));
+
+    if include_consumer_group {
+        if let Some(cg) = get(config, "group.id").or_else(|| get(config, "consumer.group")) {
+            config_obj.insert("consumerGroup".to_string(), Value::String(cg));
+        }
+        if get(config, "value.converter").as_deref()
+            == Some("io.confluent.connect.avro.AvroConverter")
+        {
+            if let Some(url) = get(config, "schema.registry.url") {
+                let mut sr: JsonMap<String, Value> = JsonMap::new();
+                sr.insert("url".to_string(), Value::String(url));
+                config_obj.insert("schemaRegistry".to_string(), Value::Object(sr));
+                config_obj.insert("format".to_string(), Value::String("avro".to_string()));
+            }
         }
     }
 
-    let mut source: JsonMap<String, Value> = JsonMap::new();
-    source.insert("type".to_string(), Value::String("kafka".to_string()));
-    source.insert("kafka".to_string(), Value::Object(kafka));
-    (source, notes)
+    let mut connector: JsonMap<String, Value> = JsonMap::new();
+    connector.insert("type".to_string(), Value::String("kafka".to_string()));
+    connector.insert("config".to_string(), Value::Object(config_obj));
+    (connector, notes)
 }
 
-/// Builds DataFlow sink spec (kafka) from Kafka Connect sink config.
-fn map_kafka_sink(config: &HashMap<String, String>) -> (JsonMap<String, Value>, Vec<String>) {
-    let notes = Vec::new();
-    let brokers = get(config, "bootstrap.servers")
-        .map(|s| brokers_from_bootstrap_servers(&s))
-        .unwrap_or_default();
-    let topic = get(config, "topics")
-        .or_else(|| get(config, "topic"))
-        .unwrap_or_else(|| "output-topic".to_string());
+/// Builds a default kafka connector spec with localhost broker and the given topic.
+fn default_kafka_connector(topic: &str) -> JsonMap<String, Value> {
+    let mut config: JsonMap<String, Value> = JsonMap::new();
+    config.insert(
+        "brokers".to_string(),
+        Value::Array(vec![Value::String("localhost:9092".to_string())]),
+    );
+    config.insert("topic".to_string(), Value::String(topic.to_string()));
 
-    let mut kafka: JsonMap<String, Value> = JsonMap::new();
-    kafka.insert("brokers".to_string(), Value::Array(brokers.into_iter().map(Value::String).collect()));
-    kafka.insert("topic".to_string(), Value::String(topic));
-
-    let mut sink: JsonMap<String, Value> = JsonMap::new();
-    sink.insert("type".to_string(), Value::String("kafka".to_string()));
-    sink.insert("kafka".to_string(), Value::Object(kafka));
-    (sink, notes)
+    let mut connector: JsonMap<String, Value> = JsonMap::new();
+    connector.insert("type".to_string(), Value::String("kafka".to_string()));
+    connector.insert("config".to_string(), Value::Object(config));
+    connector
 }
 
 /// Builds DataFlow sink spec (postgresql) from JDBC Sink config.
@@ -126,18 +145,18 @@ fn map_jdbc_sink(config: &HashMap<String, String>) -> (JsonMap<String, Value>, V
         notes.push("Table name derived from topics; consider setting table.name.format in Kafka Connect or adjust in DataFlow.".to_string());
     }
 
-    let mut postgresql: JsonMap<String, Value> = JsonMap::new();
-    postgresql.insert("connectionString".to_string(), Value::String(connection_string));
-    postgresql.insert("table".to_string(), Value::String(table));
+    let mut config_obj: JsonMap<String, Value> = JsonMap::new();
+    config_obj.insert("connectionString".to_string(), Value::String(connection_string));
+    config_obj.insert("table".to_string(), Value::String(table));
 
     let mut sink: JsonMap<String, Value> = JsonMap::new();
     sink.insert("type".to_string(), Value::String("postgresql".to_string()));
-    sink.insert("postgresql".to_string(), Value::Object(postgresql));
+    sink.insert("config".to_string(), Value::Object(config_obj));
     (sink, notes)
 }
 
 /// Migrates Kafka Connect config JSON to DataFlow YAML manifest + migration notes.
-pub fn migrate_kafka_connect_to_dataflow(kafka_connect_config: &str) -> Result<String, String> {
+pub fn migrate_kafka_connect_to_dataflow(kafka_connect_config: &str) -> Result<String> {
     let connectors = parse_input(kafka_connect_config)?;
     let mut all_notes: Vec<String> = Vec::new();
 
@@ -145,7 +164,9 @@ pub fn migrate_kafka_connect_to_dataflow(kafka_connect_config: &str) -> Result<S
     let mut sink_spec: Option<JsonMap<String, Value>> = None;
 
     for conn in &connectors {
-        let config = conn.config.as_ref().ok_or("Each connector must have 'config'")?;
+        let config = conn.config.as_ref().ok_or_else(|| {
+            DataFlowError::Other("Each connector must have 'config'".to_string())
+        })?;
         let connector_class = get(config, "connector.class").unwrap_or_else(|| "unknown".to_string());
         let (direction, kind) = connector_kind(&connector_class);
 
@@ -166,11 +187,11 @@ pub fn migrate_kafka_connect_to_dataflow(kafka_connect_config: &str) -> Result<S
         }
 
         if direction == "source" && kind == "kafka" {
-            let (spec, notes) = map_kafka_source(config);
+            let (spec, notes) = build_kafka_config(config, "input-topic", true);
             source_spec = Some(spec);
             all_notes.extend(notes);
         } else if direction == "sink" && kind == "kafka" {
-            let (spec, notes) = map_kafka_sink(config);
+            let (spec, notes) = build_kafka_config(config, "output-topic", false);
             sink_spec = Some(spec);
             all_notes.extend(notes);
         } else if direction == "sink" && kind == "postgresql" {
@@ -194,38 +215,17 @@ pub fn migrate_kafka_connect_to_dataflow(kafka_connect_config: &str) -> Result<S
         spec.insert("source".to_string(), Value::Object(s));
     } else {
         all_notes.push("No supported source connector found; add source block manually (e.g. kafka).".to_string());
-        let mut default_source: JsonMap<String, Value> = JsonMap::new();
-        default_source.insert("type".to_string(), Value::String("kafka".to_string()));
-        default_source.insert("kafka".to_string(), Value::Object({
-            let mut k: JsonMap<String, Value> = JsonMap::new();
-            k.insert("brokers".to_string(), Value::Array(vec![Value::String("localhost:9092".to_string())]));
-            k.insert("topic".to_string(), Value::String("input-topic".to_string()));
-            k
-        }));
-        spec.insert("source".to_string(), Value::Object(default_source));
+        spec.insert("source".to_string(), Value::Object(default_kafka_connector("input-topic")));
     }
     if let Some(s) = sink_spec {
         spec.insert("sink".to_string(), Value::Object(s));
     } else {
         all_notes.push("No supported sink connector found; add sink block manually (e.g. kafka or postgresql).".to_string());
-        let mut default_sink: JsonMap<String, Value> = JsonMap::new();
-        default_sink.insert("type".to_string(), Value::String("kafka".to_string()));
-        default_sink.insert("kafka".to_string(), Value::Object({
-            let mut k: JsonMap<String, Value> = JsonMap::new();
-            k.insert("brokers".to_string(), Value::Array(vec![Value::String("localhost:9092".to_string())]));
-            k.insert("topic".to_string(), Value::String("output-topic".to_string()));
-            k
-        }));
-        spec.insert("sink".to_string(), Value::Object(default_sink));
+        spec.insert("sink".to_string(), Value::Object(default_kafka_connector("output-topic")));
     }
 
-    let mut top: JsonMap<String, Value> = JsonMap::new();
-    top.insert("apiVersion".to_string(), Value::String(DATAFLOW_API_VERSION.to_string()));
-    top.insert("kind".to_string(), Value::String(DATAFLOW_KIND.to_string()));
-    top.insert("metadata".to_string(), Value::Object(metadata));
-    top.insert("spec".to_string(), Value::Object(spec));
-
-    let yaml = serde_yaml::to_string(&top).map_err(|e| e.to_string())?;
+    let top = build_dataflow_toplevel(metadata, spec);
+    let yaml = to_yaml_string(&top)?;
     let mut out = String::from("# DataFlow manifest generated from Kafka Connect config\n");
     if !all_notes.is_empty() {
         out.push_str("# Migration notes:\n");
@@ -265,7 +265,7 @@ mod tests {
         let out = migrate_kafka_connect_to_dataflow(config).unwrap();
         assert!(out.contains("apiVersion: dataflow.dataflow.io/v1"));
         assert!(out.contains("kind: DataFlow"));
-        assert!(out.contains("postgresql:"));
+        assert!(out.contains("config:"));
         assert!(out.contains("connectionString:"));
         assert!(out.contains("jdbc:postgresql"));
         assert!(out.contains("events"));
@@ -284,7 +284,7 @@ mod tests {
         }"#;
         let out = migrate_kafka_connect_to_dataflow(config).unwrap();
         assert!(out.contains("source:"));
-        assert!(out.contains("kafka:"));
+        assert!(out.contains("config:"));
         assert!(out.contains("brokers:"));
         assert!(out.contains("broker1:9092"));
         assert!(out.contains("input-topic"));

@@ -1,5 +1,6 @@
 //! DataFlow MCP server: generate manifests and migrate Kafka Connect to DataFlow.
 
+mod error;
 mod tools;
 mod types;
 
@@ -81,7 +82,7 @@ impl DataFlowMcpService {
             p.namespace.as_deref(),
         ) {
             Ok(out) => Ok(CallToolResult::success(vec![Content::text(out)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 
@@ -93,9 +94,9 @@ impl DataFlowMcpService {
         let config = params.0.config;
         match tools::manifest::validate_dataflow_manifest(&config) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text("Конфигурация валидна.")])),
-            Err(errors) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Ошибки валидации:\n{}",
-                errors.join("\n")
+                e
             ))])),
         }
     }
@@ -107,7 +108,7 @@ impl DataFlowMcpService {
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         match tools::kafka_connect::migrate_kafka_connect_to_dataflow(&params.0.kafka_connect_config) {
             Ok(out) => Ok(CallToolResult::success(vec![Content::text(out)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 
@@ -127,15 +128,12 @@ impl DataFlowMcpService {
 #[tool_handler]
 impl ServerHandler for DataFlowMcpService {
     fn get_info(&self) -> rmcp::model::ServerInfo {
-        rmcp::model::ServerInfo {
-            // name: Some("dataflow".to_string()),
-            // version: Some("0.1.0".to_string()),
-            instructions: Some("MCP for DataFlow: generate manifests and migrate Kafka Connect to DataFlow.".to_string()),
-            capabilities: rmcp::model::ServerCapabilities::builder()
+        rmcp::model::ServerInfo::new(
+            rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
-            ..Default::default()
-        }
+        )
+        .with_instructions("MCP for DataFlow: generate manifests and migrate Kafka Connect to DataFlow.")
     }
 }
 

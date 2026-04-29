@@ -1,14 +1,9 @@
 // Reference data for connectors and transformations (list_dataflow_connectors, list_dataflow_transformations).
 
-use serde_json::{Map as JsonMap, Value};
+use super::common::pretty_json_from_raw;
 
 pub fn list_dataflow_connectors_json() -> String {
-    let connectors: JsonMap<String, Value> = default_connectors();
-    serde_json::to_string_pretty(&connectors).unwrap_or_else(|_| default_connectors_raw().to_string())
-}
-
-fn default_connectors() -> JsonMap<String, Value> {
-    serde_json::from_str(default_connectors_raw()).unwrap_or_default()
+    pretty_json_from_raw(default_connectors_raw())
 }
 
 fn default_connectors_raw() -> &'static str {
@@ -61,12 +56,7 @@ fn default_connectors_raw() -> &'static str {
 }
 
 pub fn list_dataflow_transformations_json() -> String {
-    let transformations: JsonMap<String, Value> = default_transformations();
-    serde_json::to_string_pretty(&transformations).unwrap_or_else(|_| default_transformations_raw().to_string())
-}
-
-fn default_transformations() -> JsonMap<String, Value> {
-    serde_json::from_str(default_transformations_raw()).unwrap_or_default()
+    pretty_json_from_raw(default_transformations_raw())
 }
 
 fn default_transformations_raw() -> &'static str {

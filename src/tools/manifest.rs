@@ -1,6 +1,8 @@
 // Generate and validate DataFlow manifests.
 
-use crate::types::{ParsedDataFlow, DATAFLOW_API_VERSION, DATAFLOW_KIND, SINK_TYPES, SOURCE_TYPES};
+use super::common::{build_connector_spec, build_dataflow_toplevel, parse_json, to_yaml_string};
+use crate::error::{DataFlowError, Result};
+use crate::types::{ParsedDataFlow, DATAFLOW_API_VERSION, DATAFLOW_KIND};
 use serde_json::{Map as JsonMap, Value};
 
 /// Generates a DataFlow YAML manifest from the given parameters.
@@ -15,18 +17,16 @@ pub fn generate_dataflow_manifest(
     transformations: Option<&str>,
     name: Option<&str>,
     namespace: Option<&str>,
-) -> Result<String, String> {
-    if !SOURCE_TYPES.contains(&source_type) {
-        return Err(format!(
-            "source_type must be one of: {}",
-            SOURCE_TYPES.join(", ")
-        ));
+) -> Result<String> {
+    if source_type.trim().is_empty() {
+        return Err(DataFlowError::Validation(vec![
+            "source_type is required".to_string(),
+        ]));
     }
-    if !SINK_TYPES.contains(&sink_type) {
-        return Err(format!(
-            "sink_type must be one of: {}",
-            SINK_TYPES.join(", ")
-        ));
+    if sink_type.trim().is_empty() {
+        return Err(DataFlowError::Validation(vec![
+            "sink_type is required".to_string(),
+        ]));
     }
 
     let mut metadata: JsonMap<String, Value> = JsonMap::new();
@@ -38,29 +38,15 @@ pub fn generate_dataflow_manifest(
         metadata.insert("namespace".to_string(), Value::String(ns.to_string()));
     }
 
-    let mut source: JsonMap<String, Value> = JsonMap::new();
-    source.insert("type".to_string(), Value::String(source_type.to_string()));
-    let source_config_obj: JsonMap<String, Value> = if let Some(sc) = source_config {
-        serde_json::from_str(sc).map_err(|e| format!("source_config invalid JSON: {}", e))?
-    } else {
-        JsonMap::new()
-    };
-    source.insert(source_type.to_string(), Value::Object(source_config_obj));
-
-    let mut sink: JsonMap<String, Value> = JsonMap::new();
-    sink.insert("type".to_string(), Value::String(sink_type.to_string()));
-    let sink_config_obj: JsonMap<String, Value> = if let Some(sc) = sink_config {
-        serde_json::from_str(sc).unwrap_or_else(|_| JsonMap::new())
-    } else {
-        JsonMap::new()
-    };
-    sink.insert(sink_type.to_string(), Value::Object(sink_config_obj));
+    let source = build_connector_spec(source_type, source_config)?;
+    let sink = build_connector_spec(sink_type, sink_config)
+        .unwrap_or_else(|_| build_connector_spec(sink_type, None).unwrap());
 
     let mut spec: JsonMap<String, Value> = JsonMap::new();
     spec.insert("source".to_string(), Value::Object(source));
     spec.insert("sink".to_string(), Value::Object(sink));
     if let Some(tr) = transformations {
-        let arr: Value = serde_json::from_str(tr).map_err(|e| format!("transformations invalid JSON: {}", e))?;
+        let arr: Value = parse_json(tr, "transformations")?;
         if let Value::Array(a) = arr {
             if !a.is_empty() {
                 spec.insert("transformations".to_string(), Value::Array(a));
@@ -68,14 +54,9 @@ pub fn generate_dataflow_manifest(
         }
     }
 
-    let mut top: JsonMap<String, Value> = JsonMap::new();
-    top.insert("apiVersion".to_string(), Value::String(DATAFLOW_API_VERSION.to_string()));
-    top.insert("kind".to_string(), Value::String(DATAFLOW_KIND.to_string()));
-    top.insert("metadata".to_string(), Value::Object(metadata));
-    top.insert("spec".to_string(), Value::Object(spec));
-
-    let yaml = serde_yaml::to_string(&top).map_err(|e| e.to_string())?;
-    let mut out = format!("# Generated DataFlow manifest\n");
+    let top = build_dataflow_toplevel(metadata, spec);
+    let yaml = to_yaml_string(&top)?;
+    let mut out = String::from("# Generated DataFlow manifest\n");
     if let Some(d) = description {
         out.push_str(&format!("# Description: {}\n", d));
     }
@@ -84,10 +65,8 @@ pub fn generate_dataflow_manifest(
 }
 
 /// Validates a DataFlow YAML manifest: parsing, apiVersion/kind, spec.source/spec.sink, and basic required fields per type.
-pub fn validate_dataflow_manifest(config_yaml: &str) -> Result<(), Vec<String>> {
-    let parsed: ParsedDataFlow = serde_yaml::from_str(config_yaml).map_err(|e| {
-        vec![format!("YAML parse error: {}", e)]
-    })?;
+pub fn validate_dataflow_manifest(config_yaml: &str) -> Result<()> {
+    let parsed: ParsedDataFlow = serde_yaml::from_str(config_yaml)?;
 
     let mut errors = Vec::new();
 
@@ -104,92 +83,42 @@ pub fn validate_dataflow_manifest(config_yaml: &str) -> Result<(), Vec<String>> 
         Some(s) => s,
         None => {
             errors.push("spec is required".to_string());
-            return Err(errors);
+            return Err(DataFlowError::Validation(errors));
         }
     };
     let source = match &spec.source {
         Some(s) => s,
         None => {
             errors.push("spec.source is required".to_string());
-            return Err(errors);
+            return Err(DataFlowError::Validation(errors));
         }
     };
     let sink = match &spec.sink {
         Some(s) => s,
         None => {
             errors.push("spec.sink is required".to_string());
-            return Err(errors);
+            return Err(DataFlowError::Validation(errors));
         }
     };
 
     let source_type = source.type_.as_deref().unwrap_or("");
-    if !SOURCE_TYPES.contains(&source_type) {
-        errors.push(format!(
-            "spec.source.type must be one of: {}",
-            SOURCE_TYPES.join(", ")
-        ));
-    } else {
-        match source_type {
-            "kafka" => {
-                if source.kafka.is_none() {
-                    errors.push("spec.source.kafka is required when source.type is kafka".to_string());
-                }
-            }
-            "postgresql" => {
-                if source.postgresql.is_none() {
-                    errors.push("spec.source.postgresql is required when source.type is postgresql".to_string());
-                }
-            }
-            "trino" => {
-                if source.trino.is_none() {
-                    errors.push("spec.source.trino is required when source.type is trino".to_string());
-                }
-            }
-            "clickhouse" => {
-                if source.clickhouse.is_none() {
-                    errors.push("spec.source.clickhouse is required when source.type is clickhouse".to_string());
-                }
-            }
-            _ => {}
-        }
+    if source_type.is_empty() {
+        errors.push("spec.source.type is required".to_string());
+    } else if source.config.is_none() {
+        errors.push(format!("spec.source.config is required when source.type is {}", source_type));
     }
 
     let sink_type = sink.type_.as_deref().unwrap_or("");
-    if !SINK_TYPES.contains(&sink_type) {
-        errors.push(format!(
-            "spec.sink.type must be one of: {}",
-            SINK_TYPES.join(", ")
-        ));
-    } else {
-        match sink_type {
-            "kafka" => {
-                if sink.kafka.is_none() {
-                    errors.push("spec.sink.kafka is required when sink.type is kafka".to_string());
-                }
-            }
-            "postgresql" => {
-                if sink.postgresql.is_none() {
-                    errors.push("spec.sink.postgresql is required when sink.type is postgresql".to_string());
-                }
-            }
-            "trino" => {
-                if sink.trino.is_none() {
-                    errors.push("spec.sink.trino is required when sink.type is trino".to_string());
-                }
-            }
-            "clickhouse" => {
-                if sink.clickhouse.is_none() {
-                    errors.push("spec.sink.clickhouse is required when sink.type is clickhouse".to_string());
-                }
-            }
-            _ => {}
-        }
+    if sink_type.is_empty() {
+        errors.push("spec.sink.type is required".to_string());
+    } else if sink.config.is_none() {
+        errors.push(format!("spec.sink.config is required when sink.type is {}", sink_type));
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors)
+        Err(DataFlowError::Validation(errors))
     }
 }
 
@@ -216,17 +145,33 @@ mod tests {
         assert!(yaml.contains("spec:"));
         assert!(yaml.contains("source:"));
         assert!(yaml.contains("sink:"));
-        assert!(yaml.contains("kafka:"));
-        assert!(yaml.contains("postgresql:"));
+        assert!(yaml.contains("config:"));
         assert!(yaml.contains("brokers:"));
         assert!(yaml.contains("connectionString:"));
     }
 
     #[test]
-    fn test_generate_dataflow_manifest_invalid_source_type() {
-        let err = generate_dataflow_manifest(
+    fn test_generate_dataflow_manifest_custom_types() {
+        let yaml = generate_dataflow_manifest(
             None,
-            "invalid",
+            "my-custom-source",
+            "my-custom-sink",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(yaml.contains("type: my-custom-source"));
+        assert!(yaml.contains("type: my-custom-sink"));
+    }
+
+    #[test]
+    fn test_generate_dataflow_manifest_requires_source_and_sink_type() {
+        let source_err = generate_dataflow_manifest(
+            None,
+            "",
             "postgresql",
             None,
             None,
@@ -235,7 +180,20 @@ mod tests {
             None,
         )
         .unwrap_err();
-        assert!(err.contains("source_type must be one of"));
+        assert!(source_err.to_string().contains("source_type is required"));
+
+        let sink_err = generate_dataflow_manifest(
+            None,
+            "kafka",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(sink_err.to_string().contains("sink_type is required"));
     }
 
     #[test]
@@ -248,12 +206,12 @@ metadata:
 spec:
   source:
     type: kafka
-    kafka:
+    config:
       brokers: ["localhost:9092"]
       topic: input
   sink:
     type: postgresql
-    postgresql:
+    config:
       connectionString: "postgres://localhost/db"
       table: out
 "#;
@@ -270,13 +228,18 @@ metadata:
 spec:
   source:
     type: kafka
-    kafka: {}
+    config: {}
   sink:
     type: kafka
-    kafka: {}
+    config: {}
 "#;
         let err = validate_dataflow_manifest(yaml).unwrap_err();
-        assert!(err.iter().any(|e| e.contains("kind")));
+        match err {
+            DataFlowError::Validation(errors) => {
+                assert!(errors.iter().any(|e| e.contains("kind")));
+            }
+            other => panic!("expected Validation, got: {}", other),
+        }
     }
 
     #[test]
@@ -288,7 +251,18 @@ metadata:
   name: test
 "#;
         let err = validate_dataflow_manifest(yaml).unwrap_err();
-        assert!(!err.is_empty());
+        match err {
+            DataFlowError::Validation(errors) => assert!(!errors.is_empty()),
+            DataFlowError::Yaml(_) => {} // also acceptable: YAML may fail to parse spec
+            other => panic!("expected Validation or Yaml, got: {}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_dataflow_manifest_invalid_yaml() {
+        let yaml = "{{not valid yaml";
+        let err = validate_dataflow_manifest(yaml).unwrap_err();
+        assert!(matches!(err, DataFlowError::Yaml(_)));
     }
 
     #[test]
@@ -307,7 +281,7 @@ metadata:
         assert!(yaml.contains("apiVersion: dataflow.dataflow.io/v1"));
         assert!(yaml.contains("kind: DataFlow"));
         assert!(yaml.contains("name: kafka-to-clickhouse"));
-        assert!(yaml.contains("clickhouse:"));
+        assert!(yaml.contains("config:"));
         assert!(yaml.contains("connectionString:"));
         assert!(yaml.contains("output_table"));
     }
@@ -322,14 +296,34 @@ metadata:
 spec:
   source:
     type: clickhouse
-    clickhouse:
+    config:
       connectionString: "clickhouse://default@localhost:9000/default"
       table: source_table
   sink:
     type: clickhouse
-    clickhouse:
+    config:
       connectionString: "clickhouse://default@localhost:9000/default"
       table: sink_table
+"#;
+        assert!(validate_dataflow_manifest(yaml).is_ok());
+    }
+
+    #[test]
+    fn test_validate_dataflow_manifest_custom_types() {
+        let yaml = r#"
+apiVersion: dataflow.dataflow.io/v1
+kind: DataFlow
+metadata:
+  name: custom-types-test
+spec:
+  source:
+    type: foo-source
+    config:
+      any: value
+  sink:
+    type: bar-sink
+    config:
+      any: value
 "#;
         assert!(validate_dataflow_manifest(yaml).is_ok());
     }
