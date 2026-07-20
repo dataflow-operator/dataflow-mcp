@@ -1,3 +1,9 @@
+## 1.0.3 (2026-07-20)
+
+## Commits
+
+- 332e6e4 Add insertField transformation to reference documentation with description and example
+
 ## 1.0.2 (2026-07-19)
 
 ## Commits
