@@ -133,6 +133,10 @@ fn default_transformations_raw() -> &'static str {
   "timezone": {
     "description": "Convert temporal fields to a target IANA timezone or ±HH:MM offset (RFC3339/epoch in, RFC3339Nano/RFC3339/UnixMilli out)",
     "example": { "type": "timezone", "timezone": { "timezone": "Europe/Moscow", "fields": ["created_at", "updated_at"], "sourceTimezone": "UTC", "format": "RFC3339" } }
+  },
+  "insertField": {
+    "description": "Insert or overwrite JSON fields with literals, ${metadata.*}, ${now}, or json:<raw> (Connect InsertField style)",
+    "example": { "type": "insertField", "insertField": { "fields": { "pipeline": "orders-cdc", "source_topic": "${metadata.topic}", "ingested_at": "${now}", "flags.reprocessed": "json:false" } } }
   }
 }"#
 }
