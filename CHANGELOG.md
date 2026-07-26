@@ -1,3 +1,9 @@
+## 1.0.4 (2026-07-26)
+
+## Commits
+
+- 712f410 Add Nessie and Iceberg connectors to reference documentation with required and optional fields for both sources and sinks.
+
 ## 1.0.3 (2026-07-20)
 
 ## Commits
