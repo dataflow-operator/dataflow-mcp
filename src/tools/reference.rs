@@ -33,6 +33,16 @@ fn default_connectors_raw() -> &'static str {
       "description": "Read from ClickHouse tables",
       "required_fields": ["connectionString", "table"],
       "optional_fields": ["query", "pollInterval"]
+    },
+    "nessie": {
+      "description": "Read Iceberg tables via Nessie catalog",
+      "required_fields": ["baseURL", "namespace", "table"],
+      "optional_fields": ["branch", "warehouse", "query", "pollInterval", "basicAuth", "bearerToken", "authenticationType", "baseURLSecretRef", "tokenSecretRef", "namespaceSecretRef", "tableSecretRef", "incrementalBySnapshot", "startSnapshotID", "snapshotCheckpoints", "maxRowsPerPoll", "maxBytesPerPoll"]
+    },
+    "iceberg": {
+      "description": "Read Iceberg tables via official REST Catalog API",
+      "required_fields": ["catalogURI", "namespace", "table"],
+      "optional_fields": ["prefix", "warehouse", "query", "pollInterval", "basicAuth", "bearerToken", "authenticationType", "oauth2ServerURI", "oauth2ClientID", "oauth2ClientSecret", "oauth2Scope", "catalogURISecretRef", "tokenSecretRef", "namespaceSecretRef", "tableSecretRef", "incrementalBySnapshot", "startSnapshotID", "snapshotCheckpoints", "maxRowsPerPoll", "maxBytesPerPoll"]
     }
   },
   "sinks": {
@@ -55,6 +65,16 @@ fn default_connectors_raw() -> &'static str {
       "description": "Write to ClickHouse tables",
       "required_fields": ["connectionString", "table"],
       "optional_fields": ["batchSize", "batchFlushIntervalSeconds", "autoCreateTable", "rawMode"]
+    },
+    "nessie": {
+      "description": "Write Iceberg tables via Nessie catalog",
+      "required_fields": ["baseURL", "namespace", "table"],
+      "optional_fields": ["branch", "warehouse", "batchSize", "batchFlushIntervalSeconds", "autoCreateTable", "rawMode", "flattenMetadataColumns", "flattenMetadataColumnsPrefix", "basicAuth", "bearerToken", "authenticationType", "baseURLSecretRef", "tokenSecretRef", "namespaceSecretRef", "tableSecretRef", "s3Endpoint", "s3Region", "accessKeySecretRef", "secretAccessKeySecretRef"]
+    },
+    "iceberg": {
+      "description": "Write Iceberg tables via official REST Catalog API",
+      "required_fields": ["catalogURI", "namespace", "table"],
+      "optional_fields": ["prefix", "warehouse", "batchSize", "batchFlushIntervalSeconds", "autoCreateTable", "rawMode", "flattenMetadataColumns", "flattenMetadataColumnsPrefix", "basicAuth", "bearerToken", "authenticationType", "oauth2ServerURI", "oauth2ClientID", "oauth2ClientSecret", "oauth2Scope", "catalogURISecretRef", "tokenSecretRef", "namespaceSecretRef", "tableSecretRef", "s3Endpoint", "s3Region", "accessKeySecretRef", "secretAccessKeySecretRef"]
     }
   }
 }"#
